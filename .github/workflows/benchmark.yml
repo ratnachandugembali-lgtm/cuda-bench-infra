@@ -1,30 +1,20 @@
-# Name of this pipeline — shows up in GitHub UI
 name: Benchmark CI
 
-# ── Triggers ──────────────────────────────────────────────────────
-# When should this pipeline run?
 on:
   push:
-    branches: [ main ]        # Every time code is pushed to main branch
+    branches: [ main ]
   pull_request:
-    branches: [ main ]        # Every time a pull request targets main
-  workflow_dispatch:           # Allow manual runs from GitHub UI
+    branches: [ main ]
+  workflow_dispatch:
 
-# ── Jobs ──────────────────────────────────────────────────────────
-# A job is a set of steps that run on one machine
 jobs:
   benchmark:
-    # What kind of machine to run on (free Linux machine from GitHub)
     runs-on: ubuntu-latest
 
     steps:
-      # ── Step 1: Get the code ─────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
-        # This downloads your repo onto the GitHub machine
-        # Like git clone but automatic
 
-      # ── Step 2: Install dependencies ─────────────────────────────
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -36,7 +26,6 @@ jobs:
             libbenchmark-dev
           pip3 install pytest
 
-      # ── Step 3: Build the project ─────────────────────────────────
       - name: Build project
         run: |
           mkdir -p build
@@ -44,7 +33,6 @@ jobs:
           cmake ..
           make
 
-      # ── Step 4: Run benchmarks and save JSON ──────────────────────
       - name: Run benchmarks
         run: |
           mkdir -p results
@@ -52,33 +40,47 @@ jobs:
             --benchmark_format=json \
             --benchmark_out=results/benchmark_results.json
 
-      # ── Step 5: Run pytest ────────────────────────────────────────
       - name: Run pytest
         run: |
           pytest tests/test_benchmarks.py -v
 
-      # ── Step 6: Upload JSON results as artifact ───────────────────
-      # This saves the benchmark JSON so you can download it
-      # from GitHub after the pipeline runs
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+      - name: Download previous baseline
+        uses: dawidd6/action-download-artifact@v6
         with:
-          name: benchmark-results
-          path: results/benchmark_results.json
+          name: benchmark-baseline
+          path: results/
+          if_no_artifact_found: warn
+        continue-on-error: true
+        # continue-on-error means: if no baseline exists yet
+        # (first run), don't fail — just keep going
 
-      # ── Step 7: Regression detection ─────────────────────────────
-      # Check if anything got slower compared to baseline
       - name: Check for regressions
         run: |
-          # On first run there's no baseline — save current as baseline
           if [ ! -f results/baseline.json ]; then
+            echo "No baseline found — this is the first run"
+            echo "Saving current results as baseline"
             cp results/benchmark_results.json results/baseline.json
-            echo "First run — baseline saved"
           else
             python3 tests/regression_detector.py
           fi
 
-      # ── Step 8: Print summary ─────────────────────────────────────
+      - name: Save current results as new baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-baseline
+          path: results/benchmark_results.json
+          overwrite: true
+        # Every successful run updates the baseline
+        # So baseline always reflects the last known good state
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: results/benchmark_results.json
+        # Also save results tagged by commit hash
+        # So you have a full history of every run
+
       - name: Print benchmark summary
         run: |
           echo "════════════════════════════════════"
