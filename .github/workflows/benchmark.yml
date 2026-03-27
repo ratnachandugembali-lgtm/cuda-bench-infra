@@ -1,0 +1,96 @@
+# Name of this pipeline — shows up in GitHub UI
+name: Benchmark CI
+
+# ── Triggers ──────────────────────────────────────────────────────
+# When should this pipeline run?
+on:
+  push:
+    branches: [ main ]        # Every time code is pushed to main branch
+  pull_request:
+    branches: [ main ]        # Every time a pull request targets main
+  workflow_dispatch:           # Allow manual runs from GitHub UI
+
+# ── Jobs ──────────────────────────────────────────────────────────
+# A job is a set of steps that run on one machine
+jobs:
+  benchmark:
+    # What kind of machine to run on (free Linux machine from GitHub)
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Step 1: Get the code ─────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+        # This downloads your repo onto the GitHub machine
+        # Like git clone but automatic
+
+      # ── Step 2: Install dependencies ─────────────────────────────
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            python3 \
+            python3-pip \
+            libbenchmark-dev
+          pip3 install pytest
+
+      # ── Step 3: Build the project ─────────────────────────────────
+      - name: Build project
+        run: |
+          mkdir -p build
+          cd build
+          cmake ..
+          make
+
+      # ── Step 4: Run benchmarks and save JSON ──────────────────────
+      - name: Run benchmarks
+        run: |
+          mkdir -p results
+          ./build/benchmarks/bench_sort \
+            --benchmark_format=json \
+            --benchmark_out=results/benchmark_results.json
+
+      # ── Step 5: Run pytest ────────────────────────────────────────
+      - name: Run pytest
+        run: |
+          pytest tests/test_benchmarks.py -v
+
+      # ── Step 6: Upload JSON results as artifact ───────────────────
+      # This saves the benchmark JSON so you can download it
+      # from GitHub after the pipeline runs
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: results/benchmark_results.json
+
+      # ── Step 7: Regression detection ─────────────────────────────
+      # Check if anything got slower compared to baseline
+      - name: Check for regressions
+        run: |
+          # On first run there's no baseline — save current as baseline
+          if [ ! -f results/baseline.json ]; then
+            cp results/benchmark_results.json results/baseline.json
+            echo "First run — baseline saved"
+          else
+            python3 tests/regression_detector.py
+          fi
+
+      # ── Step 8: Print summary ─────────────────────────────────────
+      - name: Print benchmark summary
+        run: |
+          echo "════════════════════════════════════"
+          echo "       BENCHMARK RESULTS SUMMARY    "
+          echo "════════════════════════════════════"
+          python3 - << 'PYEOF'
+          import json
+          with open("results/benchmark_results.json") as f:
+              data = json.load(f)
+          for b in data["benchmarks"]:
+              name = b["name"].ljust(35)
+              time = f"{b['real_time']:.0f} ns"
+              ips  = f"{b.get('items_per_second', 0)/1e6:.1f}M items/sec"
+              print(f"  {name} {time.rjust(12)}  {ips.rjust(20)}")
+          PYEOF
