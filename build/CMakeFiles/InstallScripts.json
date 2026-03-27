@@ -1,8 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/Users/ratnachandu/Desktop/cuda-bench-infra/build/cmake_install.cmake",
-		"/Users/ratnachandu/Desktop/cuda-bench-infra/build/benchmarks/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
